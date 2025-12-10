@@ -195,6 +195,7 @@ function drawRing(cx,cy,R,steps,color,patt,rot){
       mgraphics.line_to(cx+rOut*ca2,cy+rOut*sa2);
       mgraphics.stroke();
     } else {
+      // MODE CHRONO = POINTS (CERCLES)
       rgba(col);
       mgraphics.arc(pos[s].x,pos[s].y,dotr*(isOn?1.0:0.8),0,Math.PI*2);
       if (isOn) mgraphics.fill(); else mgraphics.stroke();
@@ -208,7 +209,6 @@ function drawRing(cx,cy,R,steps,color,patt,rot){
     for (var k=0;k<steps;k++){
       var n=(k+1)%steps;
       if (pos[k].on && pos[n].on){
-        // version originale : relier les positions (pas de mix-up d’axes)
         mgraphics.move_to(pos[k].x,pos[k].y);
         mgraphics.line_to(pos[n].x,pos[n].y);
         mgraphics.stroke();
@@ -240,7 +240,11 @@ function drawPlayhead(cx,cy,Rmin,Rmax,ph){
 
 // --- dessin vue "grid" : 1 colonne par layer, chaque colonne occupe toute la hauteur ---
 function paintGrid(){
-  var sz=viewSize(), W=sz[0], H=sz[1];
+  var sz = viewSize(),
+      W  = sz[0],
+      H  = sz[1];
+
+  // fond
   rgba(BG);
   mgraphics.rectangle(0,0,W,H);
   mgraphics.fill();
@@ -261,25 +265,25 @@ function paintGrid(){
   var nLayers = layers.length;
 
   var colW = (W - 2*marginX) / Math.max(1,nLayers);
-  var colH = (H - 2*marginY); // chaque colonne occupe toute la hauteur utile
+  var colH = (H - 2*marginY); // hauteur utile totale (timeline verticale)
 
   mgraphics.select_font_face(fontName);
   mgraphics.set_font_size(fontSize);
 
+  // --- colonnes + cellules ---
   for (var li=0; li<nLayers; li++){
-    var L = layers[li];
-    var steps = layerSteps(L);
-    var patt  = (L.patt && L.patt.length) ? L.patt : [1];
-    var rot   = +L.rot||0;
+    var L      = layers[li];
+    var steps  = layerSteps(L);
+    var patt   = (L.patt && L.patt.length) ? L.patt : [1];
+    var rot    = +L.rot||0;
 
     var x0 = marginX + li*colW;
     var x1 = x0 + colW;
     var colColor = L.color || defaultColor(li);
 
-    // hauteur de cellule spécifique à ce layer
     var cellH = colH / steps;
 
-    // cadre de la colonne (toute la hauteur)
+    // cadre colonne
     rgba([colColor[0]*0.3,colColor[1]*0.3,colColor[2]*0.3,0.7]);
     mgraphics.set_line_width(1.0);
     mgraphics.rectangle(x0, marginY, colW, colH);
@@ -287,7 +291,6 @@ function paintGrid(){
 
     // cellules
     for (var s=0; s<steps; s++){
-      // rotation en pas (approx int)
       var baseIndex = ((s - rot) % steps + steps) % steps;
       var on = patt[baseIndex % patt.length] ? 1 : 0;
 
@@ -296,25 +299,26 @@ function paintGrid(){
       var cx = (x0+x1)*0.5;
       var cy = (y0+y1)*0.5;
 
-      // fond léger
+      // fond de cellule
       rgba([0.2,0.2,0.22,0.4]);
       mgraphics.rectangle(x0, y0, colW, cellH);
       mgraphics.fill();
 
-      // point ON/OFF
+      // carrés ON/OFF
       var r = Math.min(colW,cellH)*0.35;
       if (on){
         rgba([colColor[0],colColor[1],colColor[2],1.0]);
-        mgraphics.arc(cx,cy,r,0,Math.PI*2);
+        mgraphics.rectangle(cx - r, cy - r, 2*r, 2*r);
         mgraphics.fill();
-      }else{
+      } else {
+        var rOff = r*0.7;
         rgba([colColor[0]*0.6,colColor[1]*0.6,colColor[2]*0.6,0.6]);
-        mgraphics.arc(cx,cy,r*0.7,0,Math.PI*2);
+        mgraphics.rectangle(cx - rOff, cy - rOff, 2*rOff, 2*rOff);
         mgraphics.stroke();
       }
     }
 
-    // label en dessous (commune à la hauteur max)
+    // label sous la colonne
     if (L.label){
       rgba([1,1,1,0.8]);
       var tm2=mgraphics.text_measure(L.label), tw2=tm2?tm2[0]:0;
@@ -322,7 +326,7 @@ function paintGrid(){
       mgraphics.show_text(L.label);
     }
 
-    // highlight si sélectionné
+    // highlight layer sélectionné
     if (li === selected){
       rgba([1,1,1,0.35]);
       mgraphics.set_line_width(2.0);
@@ -330,6 +334,19 @@ function paintGrid(){
       mgraphics.stroke();
     }
   }
+
+  // --- aiguille de lecture en mode grid ---
+  // playPhase ∈ [0,1) → position verticale dans la timeline
+  var ph = playPhase % 1;
+  if (ph < 0) ph += 1;
+
+  var yPlay = marginY + colH * ph;
+
+  rgba([1,1,1,0.85]);
+  mgraphics.set_line_width(2.0);
+  mgraphics.move_to(marginX,       yPlay);
+  mgraphics.line_to(W - marginX,   yPlay);
+  mgraphics.stroke();
 }
 
 // --- rendu principal ---
@@ -339,7 +356,7 @@ function paint(){
     return;
   }
 
-  // vue circulaire (chrono) inchangée
+  // vue circulaire (chrono)
   var sz=viewSize(), W=sz[0], H=sz[1], cx=W/2, cy=H/2;
   rgba(BG);
   mgraphics.rectangle(0,0,W,H);
