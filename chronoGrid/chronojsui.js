@@ -1,49 +1,6 @@
-/* chronojsui.js — circular + grid rhythm viewer (jsui + mgraphics) + dumpcontent
-   Use in Max: [jsui chronojsui.js]
-
-   Modes de vue (visu seulement) :
-     chrono   → vue circulaire (par défaut)
-     grid     → vue en colonnes (1 colonne par layer)
-
-   Messages principaux :
-     chrono              // switch vue circulaire
-     grid                // switch vue grille
-
-     addlayer <pattern_symbol> [<rotate>] [<label...>]
-       ex: addlayer x-xx- 0 Kick
-
-     setlayer <idx> pattern <pattern_string>
-     setlayer <idx> rotate  <float>
-     setlayer <idx> color   <r> <g> <b> [<a>]
-     setlayer <idx> radius  <pixels>
-
-     select <idx>
-     setpattern <pattern...>      // pour layer sélectionné
-     setrotate <v>
-     setcolor <r> <g> <b> [<a>]
-     setradius <px>
-     setlabelsel <mots...>
-
-   setplayhead <phase> [cycle_freq_hz]
-     phase ∈ ℝ, signe = sens :
-       phase >= 0 → lecture avant
-       phase <  0 → lecture arrière
-     |phase| modulo 1 → position dans le cycle
-     cycle_freq_hz = 1   → cycle = 1 s
-                     0.1 → cycle = 10 s, etc.
-
-   dumpcontent <mode> [cycle_freq_hz]
-     mode 0/1 → dict JSON, 2 → STRING "0/1"
-     → outlet 1:
-       "stockdump dict <json>"
-       "stockdump string <pattern>"
-
-   La grille logique de chaque layer = length(pattern).
-*/
-
 autowatch = 1;
 inlets = 1;
-outlets = 2; // 0: dict/debug, 1: messages pour node
+outlets = 2; // 0: dict/debug, 1: messages pour node / writer
 
 // --- jsui / mgraphics ---
 mgraphics.init();
@@ -56,10 +13,13 @@ var STYLE = "dots";
 var MAX_RING_SPACING = 22;
 var VIEWMODE = "chrono"; // "chrono" | "grid"
 
-var layers = []; // [{patt[], rot, color[4], radius, label, _Rcache}]
+var layers = []; // [{patt[], rot, color[4], radius, label, pitch, vel, _Rcache}]
 var playPhase = 0;
 var PLAY_DIR  = 1;   // 1 = avant, -1 = arrière (info dump seulement)
 var CYCLE_FREQ = 1.0; // Hz, 1 => cycle = 1 s
+
+// longueur du clip cible (beats) pour l’écriture Live (writer)
+var CLIP_LEN_BEATS = 4.0;
 
 var selected = -1;
 
@@ -398,15 +358,8 @@ function paint(){
 }
 
 // --- switch de vue ---
-function chrono(){
-  VIEWMODE = "chrono";
-  refresh();
-}
-
-function grid(){
-  VIEWMODE = "grid";
-  refresh();
-}
+function chrono(){ VIEWMODE = "chrono"; refresh(); }
+function grid(){ VIEWMODE = "grid"; refresh(); }
 
 // --- messages globaux / couches / sélection ---
 function clear(){
@@ -431,8 +384,13 @@ function setmaxringspacing(px){
   refresh();
 }
 
+// setcliplen <beats>
+function setcliplen(beats){
+  var b = parseFloat(beats);
+  if (!isNaN(b) && b > 0) CLIP_LEN_BEATS = b;
+}
+
 // setplayhead <phase> [cycle_freq_hz]
-// phase peut être négative pour lecture arrière
 function setplayhead(ph){
   var p = parseFloat(ph);
   if (isNaN(p)) p = 0;
@@ -467,18 +425,21 @@ function addlayer(pattern){
     for (var i=2;i<arguments.length;i++) parts.push(String(arguments[i]));
     label=parts.join(" ");
   }
+  var idx = layers.length;
   layers.push({
     patt: pattFromString(pattern),
     rot: rot,
-    color: defaultColor(layers.length),
+    color: defaultColor(idx),
     radius: null,
     label: label,
+    pitch: 36 + idx,
+    vel: 100,
     _Rcache: null
   });
   refresh();
 }
 
-// setlayer <idx> pattern/rotate/color/radius ...
+// setlayer <idx> pattern/rotate/color/radius/pitch/vel ...
 function setlayer(idx,prop){
   idx=Math.max(0,parseInt(idx,10)||0);
   if(!layers[idx]) return;
@@ -503,6 +464,12 @@ function setlayer(idx,prop){
   }
   else if (p==="radius" && arguments.length>=3){
     L.radius=Math.max(10,+arguments[2]||L.radius);
+  }
+  else if (p==="pitch" && arguments.length>=3){
+    L.pitch = clamp(parseInt(arguments[2],10)||0, 0, 127);
+  }
+  else if (p==="vel" && arguments.length>=3){
+    L.vel = clamp(parseInt(arguments[2],10)||100, 1, 127);
   }
   refresh();
 }
@@ -552,6 +519,16 @@ function setlabelsel(){
   setlabel(selected,parts.join(" "));
 }
 
+function setpitch(p){
+  if(selected<0||!layers[selected]) return;
+  setlayer(selected,"pitch",p);
+}
+
+function setvel(v){
+  if(selected<0||!layers[selected]) return;
+  setlayer(selected,"vel",v);
+}
+
 function onclick(x,y){
   if(!layers.length) return;
   var wh=viewSize(),
@@ -595,8 +572,131 @@ function refresh(){
   mgraphics.redraw();
 }
 
-// ---------- DUMP ----------
+// ---------- GETTERS / QUERIES (outlet 0) ----------
+function _hasLayer(i){
+  return (i != null && i >= 0 && i < layers.length && !!layers[i]);
+}
+function _selIndex(){
+  return (selected >= 0 && selected < layers.length) ? selected : -1;
+}
+function _getIdxOrSel(idx){
+  if (idx === undefined || idx === null) return _selIndex();
+  var i = parseInt(idx,10);
+  return (isNaN(i) ? _selIndex() : i);
+}
 
+// get <prop> [idx]
+// -> outlet 0 : "get <prop> <value...>"
+function get(prop, idx){
+  var p = String(prop||"").toLowerCase();
+  var i = _getIdxOrSel(idx);
+
+  // props globaux même si pas de layer sélectionné
+  if (p === "selected"){ outlet(0, "get", "selected", _selIndex()); return; }
+  if (p === "layercount"){ outlet(0, "get", "layercount", layers.length); return; }
+  if (p === "viewmode"){ outlet(0, "get", "viewmode", VIEWMODE); return; }
+  if (p === "cliplen_beats" || p === "cliplen"){ outlet(0, "get", "cliplen_beats", CLIP_LEN_BEATS); return; }
+  if (p === "cycle_hz" || p === "cyclefreq"){ outlet(0, "get", "cycle_hz", CYCLE_FREQ); return; }
+  if (p === "play_phase"){ outlet(0, "get", "play_phase", playPhase); return; }
+  if (p === "play_dir"){ outlet(0, "get", "play_dir", PLAY_DIR); return; }
+
+  if (!_hasLayer(i)){ outlet(0, "get", p, "null"); return; }
+
+  var L = layers[i];
+
+  switch(p){
+    case "steps":
+    case "stepsamount":
+      outlet(0, "get", "steps", layerSteps(L));
+      break;
+
+    case "pattern":
+      outlet(0, "get", "pattern", listToPatternString(L.patt || [1]));
+      break;
+
+    case "patternlist":
+      outlet(0, "get", "patternlist", (L.patt || [1]).slice(0));
+      break;
+
+    case "rotate":
+      outlet(0, "get", "rotate", (+L.rot||0));
+      break;
+
+    case "color":
+      outlet(0, "get", "color", (L.color || defaultColor(i)).slice(0));
+      break;
+
+    case "radius":
+      outlet(0, "get", "radius", (typeof L.radius==="number") ? L.radius : "null");
+      break;
+
+    case "label":
+      outlet(0, "get", "label", L.label || "");
+      break;
+
+    case "pitch":
+      outlet(0, "get", "pitch", (L.pitch!=null) ? (L.pitch|0) : (36+i));
+      break;
+
+    case "vel":
+      outlet(0, "get", "vel", (L.vel!=null) ? (L.vel|0) : 100);
+      break;
+
+    // composite
+    case "compositesteps": {
+      var S = compositeList().length;
+      outlet(0, "get", "compositesteps", S);
+      break;
+    }
+    case "compositepattern": {
+      var pat = listToPatternString(compositeList());
+      outlet(0, "get", "compositepattern", pat);
+      break;
+    }
+    case "compositelist": {
+      var lst = compositeList();
+      outlet(0, "get", "compositelist", lst);
+      break;
+    }
+
+    default:
+      outlet(0, "get", p, "null");
+      break;
+  }
+}
+
+// wrappers “à la Max” (messages simples)
+function getstepsamount(){ get("steps"); }
+function getpattern(){ get("pattern"); }
+function getpatternlist(){ get("patternlist"); }
+function getrotate(){ get("rotate"); }
+function getcolor(){ get("color"); }
+function getradius(){ get("radius"); }
+function getlabel(){ get("label"); }
+function getpitch(){ get("pitch"); }
+function getvel(){ get("vel"); }
+function getselected(){ get("selected"); }
+function getlayercount(){ get("layercount"); }
+function getviewmode(){ get("viewmode"); }
+function getcliplen(){ get("cliplen_beats"); }
+function getcyclefreq(){ get("cycle_hz"); }
+function getplayphase(){ get("play_phase"); }
+function getplaydir(){ get("play_dir"); }
+
+function getcompositesteps(){ get("compositesteps"); }
+function getcompositepattern(){ get("compositepattern"); }
+function getcompositelist(){ get("compositelist"); }
+
+// version indexée explicite (si tu veux requêter un layer sans le sélectionner)
+function getlayerstepsamount(idx){ get("steps", idx); }
+function getlayerpattern(idx){ get("pattern", idx); }
+function getlayerrotate(idx){ get("rotate", idx); }
+function getlayerpitch(idx){ get("pitch", idx); }
+function getlayervel(idx){ get("vel", idx); }
+function getlayerlabel(idx){ get("label", idx); }
+
+
+// ---------- DUMP ----------
 function buildSuperposeObject(){
   var Lout=[];
   for (var i=0;i<layers.length;i++){
@@ -606,6 +706,8 @@ function buildSuperposeObject(){
       steps: steps,
       pattern: (li.patt||[1]).slice(0),
       rotate: +li.rot||0,
+      pitch: (li.pitch!=null)?(li.pitch|0):(36+i),
+      vel: (li.vel!=null)?(li.vel|0):100,
       color: (li.color||[1,1,1,1]).slice(0),
       radius: (typeof li.radius==="number")?li.radius:null,
       label: li.label||""
@@ -619,6 +721,7 @@ function buildSuperposeObject(){
   var stepDurSec = cycleSec / Math.max(1, S);
 
   return {
+    clip_len_beats: CLIP_LEN_BEATS,
     layers: Lout,
     composite: {
       steps: S,
@@ -636,7 +739,6 @@ function buildSuperposeObject(){
 /** dumpcontent <mode> [cycle_freq_hz]
  *  mode = 0|1 → dict JSON ; mode = 2 → STRING (0/1)
  *  → outlet 1 : "stockdump dict <json>"  OU  "stockdump string <pattern>"
- *  Si cycle_freq_hz > 0 est fourni, il met à jour CYCLE_FREQ avant le calcul.
  */
 function dumpcontent(mode){
   var m = parseInt(mode,10) || 0;
