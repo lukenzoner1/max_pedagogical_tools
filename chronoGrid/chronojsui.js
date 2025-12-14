@@ -24,7 +24,16 @@
      setradius <px>
      setlabelsel <mots...>
 
-   dumpcontent <mode>     // 0/1=dict JSON, 2=STRING "x/-"
+   setplayhead <phase> [cycle_freq_hz]
+     phase ∈ ℝ, signe = sens :
+       phase >= 0 → lecture avant
+       phase <  0 → lecture arrière
+     |phase| modulo 1 → position dans le cycle
+     cycle_freq_hz = 1   → cycle = 1 s
+                     0.1 → cycle = 10 s, etc.
+
+   dumpcontent <mode> [cycle_freq_hz]
+     mode 0/1 → dict JSON, 2 → STRING "0/1"
      → outlet 1:
        "stockdump dict <json>"
        "stockdump string <pattern>"
@@ -49,6 +58,9 @@ var VIEWMODE = "chrono"; // "chrono" | "grid"
 
 var layers = []; // [{patt[], rot, color[4], radius, label, _Rcache}]
 var playPhase = 0;
+var PLAY_DIR  = 1;   // 1 = avant, -1 = arrière (info dump seulement)
+var CYCLE_FREQ = 1.0; // Hz, 1 => cycle = 1 s
+
 var selected = -1;
 
 // Connexions entre pas ON adjacents (vue circulaire)
@@ -156,7 +168,7 @@ function compositeList(){
 
 function listToPatternString(lst){
   var s="";
-  for (var i=0;i<lst.length;i++) s+= (lst[i]?"x":"-");
+  for (var i=0;i<lst.length;i++) s+= (lst[i] ? "1" : "0");
   return s;
 }
 
@@ -195,7 +207,6 @@ function drawRing(cx,cy,R,steps,color,patt,rot){
       mgraphics.line_to(cx+rOut*ca2,cy+rOut*sa2);
       mgraphics.stroke();
     } else {
-      // MODE CHRONO = POINTS (CERCLES)
       rgba(col);
       mgraphics.arc(pos[s].x,pos[s].y,dotr*(isOn?1.0:0.8),0,Math.PI*2);
       if (isOn) mgraphics.fill(); else mgraphics.stroke();
@@ -238,13 +249,12 @@ function drawPlayhead(cx,cy,Rmin,Rmax,ph){
   mgraphics.stroke();
 }
 
-// --- dessin vue "grid" : 1 colonne par layer, chaque colonne occupe toute la hauteur ---
+// --- dessin vue "grid" ---
 function paintGrid(){
   var sz = viewSize(),
       W  = sz[0],
       H  = sz[1];
 
-  // fond
   rgba(BG);
   mgraphics.rectangle(0,0,W,H);
   mgraphics.fill();
@@ -253,7 +263,7 @@ function paintGrid(){
     mgraphics.select_font_face(fontName);
     mgraphics.set_font_size(12);
     rgba([1,1,1,0.6]);
-    var msg="chronojsui grid — addlayer x-xx- 0 Kick";
+    var msg="chronojsui grid — addlayer 1010 0 Kick";
     var tm=mgraphics.text_measure(msg), tw=tm?tm[0]:0;
     mgraphics.move_to((W-tw)/2, H/2+5);
     mgraphics.show_text(msg);
@@ -265,12 +275,11 @@ function paintGrid(){
   var nLayers = layers.length;
 
   var colW = (W - 2*marginX) / Math.max(1,nLayers);
-  var colH = (H - 2*marginY); // hauteur utile totale (timeline verticale)
+  var colH = (H - 2*marginY);
 
   mgraphics.select_font_face(fontName);
   mgraphics.set_font_size(fontSize);
 
-  // --- colonnes + cellules ---
   for (var li=0; li<nLayers; li++){
     var L      = layers[li];
     var steps  = layerSteps(L);
@@ -283,28 +292,23 @@ function paintGrid(){
 
     var cellH = colH / steps;
 
-    // cadre colonne
     rgba([colColor[0]*0.3,colColor[1]*0.3,colColor[2]*0.3,0.7]);
     mgraphics.set_line_width(1.0);
     mgraphics.rectangle(x0, marginY, colW, colH);
     mgraphics.stroke();
 
-    // cellules
     for (var s=0; s<steps; s++){
       var baseIndex = ((s - rot) % steps + steps) % steps;
       var on = patt[baseIndex % patt.length] ? 1 : 0;
 
       var y0 = marginY + s*cellH;
-      var y1 = y0 + cellH;
       var cx = (x0+x1)*0.5;
-      var cy = (y0+y1)*0.5;
+      var cy = y0 + cellH*0.5;
 
-      // fond de cellule
       rgba([0.2,0.2,0.22,0.4]);
       mgraphics.rectangle(x0, y0, colW, cellH);
       mgraphics.fill();
 
-      // carrés ON/OFF
       var r = Math.min(colW,cellH)*0.35;
       if (on){
         rgba([colColor[0],colColor[1],colColor[2],1.0]);
@@ -318,7 +322,6 @@ function paintGrid(){
       }
     }
 
-    // label sous la colonne
     if (L.label){
       rgba([1,1,1,0.8]);
       var tm2=mgraphics.text_measure(L.label), tw2=tm2?tm2[0]:0;
@@ -326,7 +329,6 @@ function paintGrid(){
       mgraphics.show_text(L.label);
     }
 
-    // highlight layer sélectionné
     if (li === selected){
       rgba([1,1,1,0.35]);
       mgraphics.set_line_width(2.0);
@@ -335,8 +337,6 @@ function paintGrid(){
     }
   }
 
-  // --- aiguille de lecture en mode grid ---
-  // playPhase ∈ [0,1) → position verticale dans la timeline
   var ph = playPhase % 1;
   if (ph < 0) ph += 1;
 
@@ -356,7 +356,6 @@ function paint(){
     return;
   }
 
-  // vue circulaire (chrono)
   var sz=viewSize(), W=sz[0], H=sz[1], cx=W/2, cy=H/2;
   rgba(BG);
   mgraphics.rectangle(0,0,W,H);
@@ -366,7 +365,7 @@ function paint(){
     mgraphics.select_font_face(fontName);
     mgraphics.set_font_size(12);
     rgba([1,1,1,0.6]);
-    var msg="chronojsui — addlayer x-xx- 0 Kick";
+    var msg="chronojsui — addlayer 1010 0 Kick";
     var tm=mgraphics.text_measure(msg), tw=tm?tm[0]:0;
     mgraphics.move_to(cx-tw/2, cy+5);
     mgraphics.show_text(msg);
@@ -432,8 +431,30 @@ function setmaxringspacing(px){
   refresh();
 }
 
+// setplayhead <phase> [cycle_freq_hz]
+// phase peut être négative pour lecture arrière
 function setplayhead(ph){
-  playPhase=(+ph||0)%1;
+  var p = parseFloat(ph);
+  if (isNaN(p)) p = 0;
+
+  PLAY_DIR = (p >= 0) ? 1 : -1;
+
+  var t = Math.abs(p);
+  var frac = t - Math.floor(t); // [0,1)
+
+  if (PLAY_DIR > 0){
+    playPhase = frac;
+  } else {
+    playPhase = 1 - frac;
+  }
+
+  if (arguments.length >= 2){
+    var f = parseFloat(arguments[1]);
+    if (!isNaN(f) && f > 0){
+      CYCLE_FREQ = f;
+    }
+  }
+
   refresh();
 }
 
@@ -591,23 +612,42 @@ function buildSuperposeObject(){
     });
   }
   var compList = compositeList();
+  var S = compList.length;
+
+  var cycleHz  = (CYCLE_FREQ > 0) ? CYCLE_FREQ : 1.0;
+  var cycleSec = 1.0 / cycleHz;
+  var stepDurSec = cycleSec / Math.max(1, S);
+
   return {
     layers: Lout,
     composite: {
-      steps: compList.length,
+      steps: S,
       list: compList.slice(0),
-      pattern: listToPatternString(compList)
+      pattern: listToPatternString(compList),
+      cycle_hz: cycleHz,
+      cycle_sec: cycleSec,
+      step_dur_sec: stepDurSec,
+      play_dir: PLAY_DIR,
+      play_phase: playPhase
     }
   };
 }
 
-/** dumpcontent <mode>
- *  mode = 0|1 → dict JSON ; mode = 2 → STRING
+/** dumpcontent <mode> [cycle_freq_hz]
+ *  mode = 0|1 → dict JSON ; mode = 2 → STRING (0/1)
  *  → outlet 1 : "stockdump dict <json>"  OU  "stockdump string <pattern>"
+ *  Si cycle_freq_hz > 0 est fourni, il met à jour CYCLE_FREQ avant le calcul.
  */
 function dumpcontent(mode){
   var m = parseInt(mode,10) || 0;
   if (!layers.length) return;
+
+  if (arguments.length >= 2){
+    var f = parseFloat(arguments[1]);
+    if (!isNaN(f) && f > 0){
+      CYCLE_FREQ = f;
+    }
+  }
 
   if (m === 2){
     var pat = listToPatternString(compositeList());
