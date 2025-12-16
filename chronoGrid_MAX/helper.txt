@@ -1,0 +1,29 @@
+chronoGrid Max tool :
+
+# chronoGrid is a multilayer euclydian sequencer
+	. you can write patterns and layer them
+	. it does not stick to the grid so you are freed from live's midi grid
+	. you can modify (rotate) each layer independently without impacting surrounding layers
+	
+# chronoGrid has it's own syntax
+	. the syntax is dumb but clear : x is a note, - is a silence
+	. the amount of character you write determines the amount of steps contained in the written patterns
+	. there are not limit on the amount of steps you can write
+	. from now, the output is limited to one bar but i'll fix that eventually
+	. you can delay the starting point by entering a phase starting point (float).
+	
+# chronoGrid allows you to handle midiclip
+	. chronoGrid allows you to select the slots where you want to create midi clip
+	. you can choose the length in 1/4ters notes (float numbers) of the created clip
+	. you can select and fill midi clips at will
+	. midi clips can be rewritten at will
+	
+# chronoGrid simply needs you to respect the steps : 
+	1 create patterns using the text space
+	2 create a midi clip in the selected midi clip slot
+	3 fill selected midi clips
+	
+you probably need to install node (to handle js) but not sure.
+Questions and issues can be asked in github request and issues spaces.
+
+Feel free to modify (and let me know)
