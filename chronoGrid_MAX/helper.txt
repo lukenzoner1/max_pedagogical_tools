@@ -4,7 +4,6 @@ chronoGrid Max tool :
 	. you can write patterns and layer them
 	. it does not stick to the grid so you are freed from live's midi grid
 	. you can modify (rotate) each layer independently without impacting surrounding layers
- 	. It has a grid mode (vertical) and a clock mode (clockwise)
 	
 # chronoGrid has it's own syntax
 	. the syntax is dumb but clear : x is a note, - is a silence
@@ -28,4 +27,3 @@ you probably need to install node (to handle js) but not sure.
 Questions and issues can be asked in github request and issues spaces.
 
 Feel free to modify (and let me know)
-
