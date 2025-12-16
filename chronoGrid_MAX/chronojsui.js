@@ -572,6 +572,42 @@ function refresh(){
   mgraphics.redraw();
 }
 
+// ---------- REVERSE ----------
+function _reverseLayer(i){
+  if (i < 0 || i >= layers.length || !layers[i]) return;
+  var L = layers[i];
+  if (!L.patt || !L.patt.length) L.patt = [1];
+  L.patt = L.patt.slice(0).reverse();
+}
+
+// reverse            -> selected layer, sinon tous
+// reverse <idx>      -> layer idx
+function reverse(){
+  if (!layers.length) return;
+
+  if (arguments.length >= 1){
+    var i = parseInt(arguments[0],10);
+    if (!isNaN(i)) _reverseLayer(i);
+  } else if (selected >= 0 && selected < layers.length){
+    _reverseLayer(selected);
+  } else {
+    for (var k = 0; k < layers.length; k++) _reverseLayer(k);
+  }
+  refresh();
+}
+
+// helpers optionnels
+function reverseall(){
+  if (!layers.length) return;
+  for (var k = 0; k < layers.length; k++) _reverseLayer(k);
+  refresh();
+}
+function reverselayer(i){
+  _reverseLayer(parseInt(i,10)||0);
+  refresh();
+}
+
+
 // ---------- GETTERS / QUERIES (outlet 0) ----------
 function _hasLayer(i){
   return (i != null && i >= 0 && i < layers.length && !!layers[i]);
